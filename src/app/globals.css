@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+/*
+  Tally design tokens.
+  Deep green brand identity, big confident numerals, lots of whitespace.
+  Mobile-first — this app is used 95% on phones.
+*/
+:root {
+  /* Brand palette */
+  --brand: #0b3d2e; /* deep green — primary brand color */
+  --brand-accent: #16a34a; /* accent green — positive / success / active state */
+  --amber: #d97706; /* warnings, "owes you" style states */
+  --red: #dc2626; /* negative amounts, destructive actions */
+
+  /* Surface + text */
+  --background: #fafaf7; /* off-white app background */
+  --surface: #ffffff; /* cards / raised surfaces */
+  --foreground: #14170f; /* near-black text */
+  --muted: #6b7169; /* secondary text */
+  --border: #e6e5df; /* hairline borders */
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-accent: var(--brand-accent);
+  --color-amber: var(--amber);
+  --color-red: var(--red);
+
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+
+  --font-sans: var(--font-inter);
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 100%;
+}

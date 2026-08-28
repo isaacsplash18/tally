@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="112" fill="#0B3D2E"/>
+  <!-- four vertical tally bars -->
+  <rect x="132" y="140" width="36" height="232" rx="18" fill="#FFFFFF"/>
+  <rect x="208" y="140" width="36" height="232" rx="18" fill="#FFFFFF"/>
+  <rect x="284" y="140" width="36" height="232" rx="18" fill="#FFFFFF"/>
+  <rect x="360" y="140" width="36" height="232" rx="18" fill="#FFFFFF"/>
+  <!-- fifth diagonal strike bar -->
+  <rect x="108" y="238" width="320" height="36" rx="18" transform="rotate(-32 268 256)" fill="#FFFFFF"/>
+</svg>
