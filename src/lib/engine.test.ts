@@ -14,17 +14,24 @@ import {
   sgtEpoch,
   userBudgetCentsAt,
   userGenesisMonday,
+  weekMonthKey,
   weeksInMonth,
   type FixedOutflowRow,
   type HouseholdRows,
   type PotLedgerRow,
   type SettingsRow,
+  type SpendKind,
   type SpendRow,
   type UserBudgetRow,
 } from "./engine";
 
 /* ------------------------------------------------------------------ *
- * Fixtures — mirror the live Supabase seed
+ * Fixtures
+ *
+ * The synthetic seed sits at 2026-08-01 (genesis Mon 2026-08-03) to give the
+ * engine a multi-month timeline to chew on. The LIVE Supabase seed was re-dated
+ * to 2026-08-31 by the `reset_genesis_to_sep_2026` migration — that shape is
+ * asserted separately in the "live seed genesis" block below.
  * ------------------------------------------------------------------ */
 
 const ISAAC = "11111111-1111-4111-8111-111111111111";
@@ -95,6 +102,7 @@ function spend(
   whenIso: string,
   loggedBy: string = ISAAC,
   note = "test",
+  kind: SpendKind = "personal",
 ): SpendRow {
   spendSeq += 1;
   return {
@@ -102,8 +110,19 @@ function spend(
     amount,
     note,
     logged_by: loggedBy,
+    kind,
     created_at: whenIso,
   };
+}
+
+/** Spec § 16 — a household big-ticket spend, outside both weekly envelopes. */
+function familySpend(
+  amount: string,
+  whenIso: string,
+  loggedBy: string = ISAAC,
+  note = "sofa",
+): SpendRow {
+  return spend(amount, whenIso, loggedBy, note, "family");
 }
 
 let ledgerSeq = 0;
@@ -180,18 +199,95 @@ describe("SGT week bucketing", () => {
     assert.equal(m.weeksByKey["2026-08-10"].spentCents, 2000);
   });
 
-  it("counts Mondays per month: Aug 2026 → 5, Sep 2026 → 4", () => {
-    assert.equal(weeksInMonth("2026-08"), 5);
+  it("counts Thursdays per month (§ 4): Sep 2026 → 4, Dec 2026 → 5", () => {
+    // Sep 2026 Thursdays: 3 / 10 / 17 / 24.
     assert.equal(weeksInMonth("2026-09"), 4);
-    assert.equal(weeksInMonth("2026-02"), 4); // Feb 2026 starts on a Sunday
-    assert.equal(weeksInMonth("2026-06"), 5);
+    // Aug 2026 has 5 Mondays but only 4 Thursdays (6 / 13 / 20 / 27).
+    assert.equal(weeksInMonth("2026-08"), 4);
+    assert.equal(weeksInMonth("2026-02"), 4);
+    // Jun 2026 also has 5 Mondays but 4 Thursdays.
+    assert.equal(weeksInMonth("2026-06"), 4);
+    // Dec 2026 Thursdays: 3 / 10 / 17 / 24 / 31.
+    assert.equal(weeksInMonth("2026-12"), 5);
   });
 
-  it("assigns a week to the month containing its Monday", () => {
+  it("assigns a week to the month containing its THURSDAY (§ 2, ISO-8601)", () => {
+    // Mon 2026-08-31 → Sun 2026-09-06: Thursday is 3 Sep, so it is a SEPTEMBER
+    // week even though its Monday is in August.
+    assert.equal(weekMonthKey(sgtEpoch(2026, 8, 31)), "2026-09");
+    // Mon 2026-09-28 → Sun 2026-10-04: Thursday is 1 Oct → an October week.
+    assert.equal(weekMonthKey(sgtEpoch(2026, 9, 28)), "2026-10");
+    // A week sitting squarely inside its month is unaffected.
+    assert.equal(weekMonthKey(sgtEpoch(2026, 8, 10)), "2026-08");
+
     const m = model();
-    // Mon 2026-08-31 → Sun 2026-09-06 belongs to August.
-    assert.equal(m.weeksByKey["2026-08-31"].monthKey, "2026-08");
-    assert.equal(m.monthsByKey["2026-08"].weeks.length, 5);
+    assert.equal(m.weeksByKey["2026-08-31"].monthKey, "2026-09");
+    // August therefore keeps only the four weeks whose Thursday is in August.
+    assert.deepEqual(
+      m.monthsByKey["2026-08"].weeks.map((w) => w.key),
+      ["2026-08-03", "2026-08-10", "2026-08-17", "2026-08-24"],
+    );
+    assert.deepEqual(
+      m.monthsByKey["2026-09"].weeks.map((w) => w.key),
+      ["2026-08-31", "2026-09-07", "2026-09-14"],
+    );
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The live seed after `reset_genesis_to_sep_2026`
+ * ------------------------------------------------------------------ */
+
+describe("live seed genesis (nothing before 1 Sep 2026 counts)", () => {
+  const LIVE_FROM = iso(2026, 8, 31);
+  const liveSettings: SettingsRow = { ...SEED_SETTINGS, effective_from: LIVE_FROM };
+  // Rachell's seed moved with the settings row; Isaac's stayed at 2026-08-01
+  // because he made a real budget change on 2026-08-28 that must survive.
+  const liveBudgets: UserBudgetRow[] = [
+    SEED_USER_BUDGETS[0],
+    { ...SEED_USER_BUDGETS[1], effective_from: LIVE_FROM },
+  ];
+
+  it("puts genesis on Mon 2026-08-31 for both users", () => {
+    assert.equal(
+      sgtDateKey(userGenesisMonday([liveSettings], liveBudgets, ISAAC)!),
+      "2026-08-31",
+    );
+    assert.equal(
+      sgtDateKey(genesisMonday([liveSettings], liveBudgets)!),
+      "2026-08-31",
+    );
+  });
+
+  it("starts the month ledger in September — no August anywhere", () => {
+    const m = computeModel(
+      { ...rows(), settings: [liveSettings], userBudgets: liveBudgets },
+      NOW,
+      ORDER,
+    );
+    assert.equal(m.genesisWeekKey, "2026-08-31");
+    assert.deepEqual(m.months.map((x) => x.key), ["2026-09"]);
+    assert.equal(m.monthsByKey["2026-08"], undefined);
+    assert.deepEqual(
+      m.weeks.map((w) => w.key),
+      ["2026-08-31", "2026-09-07", "2026-09-14"],
+    );
+  });
+
+  it("keeps a real budget change made before the moved seed", () => {
+    // Isaac changed to 300.00 on 2026-08-28; his 350.00 seed stayed at Aug 1,
+    // so the change is still the newest row at the genesis Monday.
+    const change: UserBudgetRow = {
+      id: "budget-isaac-real",
+      user_id: ISAAC,
+      weekly_budget: "300.00",
+      effective_from: iso(2026, 8, 28, 14, 40),
+      created_at: iso(2026, 8, 28, 14, 40),
+    };
+    assert.equal(
+      userBudgetCentsAt([...liveBudgets, change], ISAAC, sgtEpoch(2026, 8, 31)),
+      30000,
+    );
   });
 });
 
@@ -330,7 +426,8 @@ describe("per-person carry chaining", () => {
     assert.equal(m.weeksByKey["2026-08-10"].userWeeksById[ISAAC].effectiveEnvelopeCents, 30000);
     assert.equal(m.weeksByKey["2026-08-10"].userWeeksById[ISAAC].resultCents, -4000);
     assert.equal(m.weeksByKey["2026-08-17"].userWeeksById[ISAAC].carryInCents, -4000);
-    // Week of Mon Aug 31 overspends; the Sep 7 week (a September week) absorbs it.
+    // The Mon Aug 31 week overspends; the Sep 7 week absorbs it. Both are
+    // September weeks under § 2 — carry does not care about month boundaries.
     assert.equal(m.weeksByKey["2026-08-31"].userWeeksById[ISAAC].resultCents, -5000);
     assert.equal(m.weeksByKey["2026-09-07"].userWeeksById[ISAAC].carryInCents, -5000);
     assert.equal(m.weeksByKey["2026-09-07"].userWeeksById[ISAAC].effectiveEnvelopeCents, 30000);
@@ -532,17 +629,66 @@ describe("fixed outflow windowing", () => {
     );
   });
 
-  it("keeps a soft-deleted outflow in the months before it was deactivated", () => {
+  it("counts a bill only in months where it was still active at the END (§ 7)", () => {
     const dropped: FixedOutflowRow = {
-      ...SEED_OUTFLOWS[0],
+      ...SEED_OUTFLOWS[0], // Netflix, 19.98
       id: "dropped",
       active: false,
       deactivated_at: iso(2026, 9, 10),
     };
     const list = [dropped, ...SEED_OUTFLOWS.slice(1)];
+    // August ended before it was dropped → it still counts there.
     assert.equal(fixedTotalCents(list, "2026-08"), SEED_FIXED_TOTAL);
-    assert.equal(fixedTotalCents(list, "2026-09"), SEED_FIXED_TOTAL);
+    // It was gone by the end of September, so September does NOT count it —
+    // the accepted trade-off: a bill cancelled mid-month after it billed is
+    // missed, in exchange for never double-counting a replaced bill.
+    assert.equal(fixedTotalCents(list, "2026-09"), SEED_FIXED_TOTAL - 1998);
     assert.equal(fixedTotalCents(list, "2026-10"), SEED_FIXED_TOTAL - 1998);
+  });
+
+  it("counts a replaced bill ONCE in the month of the replacement (§ 7)", () => {
+    // Write rule 3: an edit is deactivate + insert. Both rows exist in the
+    // month of the edit; only the survivor may count.
+    const replacedAt = iso(2026, 9, 3, 11, 0);
+    const oldRow: FixedOutflowRow = {
+      ...SEED_OUTFLOWS[0], // Netflix, 19.98
+      id: "netflix-old",
+      active: false,
+      deactivated_at: replacedAt,
+    };
+    const newRow = outflow({
+      name: "Netflix",
+      amount: "37.96",
+      billing_day: 8,
+      created_at: replacedAt,
+    });
+    const list = [oldRow, newRow, ...SEED_OUTFLOWS.slice(1)];
+
+    // September sees the replacement only: 344.98 − 19.98 + 37.96.
+    assert.equal(
+      fixedTotalCents(list, "2026-09"),
+      SEED_FIXED_TOTAL - 1998 + 3796,
+      "the deactivated original must not be counted alongside its replacement",
+    );
+    // August predates the swap entirely and keeps the original.
+    assert.equal(fixedTotalCents(list, "2026-08"), SEED_FIXED_TOTAL);
+  });
+
+  it("counts a bill in a past month it was active at the end of", () => {
+    const later = outflow({
+      name: "Gym",
+      amount: "60.00",
+      billing_day: 20,
+      created_at: iso(2026, 8, 15),
+      active: false,
+      deactivated_at: iso(2026, 10, 4),
+    });
+    // Created mid-August, alive at the end of August and September.
+    assert.equal(fixedTotalCents([later], "2026-07"), 0);
+    assert.equal(fixedTotalCents([later], "2026-08"), 6000);
+    assert.equal(fixedTotalCents([later], "2026-09"), 6000);
+    // Deactivated 4 Oct, i.e. before October ended → October does not count it.
+    assert.equal(fixedTotalCents([later], "2026-10"), 0);
   });
 });
 
@@ -624,18 +770,19 @@ describe("monthly tracking", () => {
     assert.ok(aug.remainingCents < 0);
   });
 
-  it("buckets tracking spends by CALENDAR month while weeks stay Monday-based", () => {
-    // Mon 2026-08-31 is an August WEEK, but Tue 2026-09-01 is a September MONTH.
+  it("buckets tracking spends by CALENDAR month while weeks use the Thursday rule", () => {
+    // The Mon 2026-08-31 week is a SEPTEMBER week (§ 2), but a spend on Mon
+    // 2026-08-31 still counts in AUGUST's tracking (§ 3).
     const m = model({
       spends: [
-        spend("60.00", iso(2026, 8, 31, 12, 0), ISAAC), // Aug week, Aug month
-        spend("40.00", iso(2026, 9, 2, 12, 0), ISAAC), // Aug week, Sep month
+        spend("60.00", iso(2026, 8, 31, 12, 0), ISAAC), // Sep week, Aug month
+        spend("40.00", iso(2026, 9, 2, 12, 0), ISAAC), // Sep week, Sep month
       ],
     });
 
-    const augWeek = m.weeksByKey["2026-08-31"];
-    assert.equal(augWeek.monthKey, "2026-08");
-    assert.equal(augWeek.spentCents, 10000, "both spends sit in the Aug-31 week");
+    const week = m.weeksByKey["2026-08-31"];
+    assert.equal(week.monthKey, "2026-09");
+    assert.equal(week.spentCents, 10000, "both spends sit in the Aug-31 week");
 
     assert.equal(m.monthsByKey["2026-08"].spentCents, 6000);
     assert.equal(m.monthsByKey["2026-09"].spentCents, 4000);
@@ -712,6 +859,136 @@ describe("monthly tracking", () => {
     // Meanwhile September's tracking target (a different concern, § 13) DOES
     // pick up the same row, since it lands before September's end.
     assert.equal(m.monthsByKey["2026-09"].monthlyBudgetCents, 450000);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Spend kind: family big ticket (§ 16)
+ * ------------------------------------------------------------------ */
+
+describe("family big-ticket spends", () => {
+  /** The same $200 in the Aug-3 week, logged as personal vs as family. */
+  const WHEN = iso(2026, 8, 5, 12, 0);
+
+  it("leaves the logger's envelope, result and week untouched", () => {
+    const baseline = model();
+    const withFamily = model({ spends: [familySpend("200.00", WHEN, ISAAC)] });
+
+    const clean = baseline.weeksByKey["2026-08-03"].userWeeksById[ISAAC];
+    const uw = withFamily.weeksByKey["2026-08-03"].userWeeksById[ISAAC];
+
+    assert.equal(uw.spentCents, 0, "family spends never enter an envelope");
+    assert.equal(uw.effectiveEnvelopeCents, clean.effectiveEnvelopeCents);
+    assert.equal(uw.resultCents, clean.resultCents);
+    assert.equal(uw.spends.length, 0);
+    // …and nothing lands on the other person either.
+    assert.equal(
+      withFamily.weeksByKey["2026-08-03"].userWeeksById[RACHELL].spentCents,
+      0,
+    );
+  });
+
+  it("changes neither the streak, the freeze state nor the pot", () => {
+    // Wed 2026-09-09 sits in the LAST closed week (Mon 2026-09-07), so an
+    // overspend there leaves the person frozen with no week left to thaw in.
+    const LATE = iso(2026, 9, 9, 12, 0);
+    const baseline = model();
+    const withFamily = model({ spends: [familySpend("2000.00", LATE, ISAAC)] });
+
+    assert.equal(withFamily.usersById[ISAAC].frozen, false);
+    assert.equal(withFamily.frozen, false);
+    assert.equal(withFamily.usersById[ISAAC].streak, baseline.usersById[ISAAC].streak);
+    assert.equal(withFamily.usersById[ISAAC].longestStreak, baseline.usersById[ISAAC].longestStreak);
+    assert.equal(withFamily.earnedTotalCents, baseline.earnedTotalCents);
+    assert.equal(withFamily.potBalanceCents, baseline.potBalanceCents);
+    assert.equal(
+      withFamily.weeksByKey["2026-09-07"].earnCents,
+      baseline.weeksByKey["2026-09-07"].earnCents,
+    );
+
+    // The same amount as a PERSONAL spend does freeze him — the control case.
+    const asPersonal = model({ spends: [spend("2000.00", LATE, ISAAC)] });
+    assert.equal(asPersonal.usersById[ISAAC].frozen, true);
+    assert.equal(asPersonal.usersById[ISAAC].streak, 0);
+    assert.ok(asPersonal.potBalanceCents < baseline.potBalanceCents);
+  });
+
+  it("still reduces the month's remaining, in full", () => {
+    const baseline = model();
+    const m = model({ spends: [familySpend("200.00", WHEN, ISAAC)] });
+    const aug = m.monthsByKey["2026-08"];
+
+    assert.equal(aug.familySpentCents, 20000);
+    assert.equal(aug.personalSpentCents, 0);
+    assert.equal(aug.spentCents, 20000, "spentCents is the personal + family total");
+    assert.equal(aug.trackedTotalCents, 20000 + SEED_FIXED_TOTAL);
+    assert.equal(
+      aug.remainingCents,
+      baseline.monthsByKey["2026-08"].remainingCents - 20000,
+    );
+    assert.equal(
+      aug.remainingCents,
+      aug.monthlyBudgetCents -
+        (aug.fixedTotalCents + aug.personalSpentCents + aug.familySpentCents),
+    );
+  });
+
+  it("belongs to nobody in `spentByUser`, but is listed for the month", () => {
+    const m = model({
+      spends: [
+        spend("100.00", WHEN, ISAAC),
+        familySpend("900.00", iso(2026, 8, 6, 12, 0), ISAAC, "sofa"),
+      ],
+    });
+    const aug = m.monthsByKey["2026-08"];
+    assert.equal(aug.spentByUser[ISAAC], 10000, "family is not Isaac's spend");
+    assert.equal(aug.spentByUser[RACHELL], 0);
+    assert.equal(aug.personalSpentCents, 10000);
+    assert.equal(aug.familySpentCents, 90000);
+    assert.deepEqual(aug.familySpends.map((s) => s.note), ["sofa"]);
+  });
+
+  it("still appears in the week's spend list, split out from the personal total", () => {
+    const m = model({
+      spends: [
+        spend("100.00", WHEN, ISAAC),
+        familySpend("900.00", iso(2026, 8, 6, 12, 0), RACHELL),
+      ],
+    });
+    const w = m.weeksByKey["2026-08-03"];
+    assert.equal(w.spends.length, 2, "the UI lists family spends too");
+    assert.equal(w.familySpends.length, 1);
+    assert.equal(w.personalSpentCents, 10000);
+    assert.equal(w.familySpentCents, 90000);
+    assert.equal(w.spentCents, 100000);
+  });
+
+  it("moves between buckets when a spend's kind is edited", () => {
+    const when = iso(2026, 8, 5, 12, 0);
+    const asPersonal = model({ spends: [spend("200.00", when, ISAAC)] });
+    const asFamily = model({ spends: [familySpend("200.00", when, ISAAC)] });
+
+    assert.equal(asPersonal.weeksByKey["2026-08-03"].userWeeksById[ISAAC].spentCents, 20000);
+    assert.equal(asFamily.weeksByKey["2026-08-03"].userWeeksById[ISAAC].spentCents, 0);
+
+    assert.equal(asPersonal.monthsByKey["2026-08"].personalSpentCents, 20000);
+    assert.equal(asPersonal.monthsByKey["2026-08"].familySpentCents, 0);
+    assert.equal(asFamily.monthsByKey["2026-08"].personalSpentCents, 0);
+    assert.equal(asFamily.monthsByKey["2026-08"].familySpentCents, 20000);
+
+    // The month's tracked total is identical either way — only the split moves.
+    assert.equal(
+      asPersonal.monthsByKey["2026-08"].trackedTotalCents,
+      asFamily.monthsByKey["2026-08"].trackedTotalCents,
+    );
+  });
+
+  it("treats a row with no kind at all as personal", () => {
+    const legacy = { ...spend("200.00", WHEN, ISAAC) } as SpendRow;
+    delete (legacy as Partial<SpendRow>).kind;
+    const m = model({ spends: [legacy] });
+    assert.equal(m.weeksByKey["2026-08-03"].userWeeksById[ISAAC].spentCents, 20000);
+    assert.equal(m.monthsByKey["2026-08"].familySpentCents, 0);
   });
 });
 

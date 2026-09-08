@@ -3,11 +3,13 @@
 import { useState } from "react";
 
 import { ErrorBanner, ScreenSkeleton } from "@/components/Feedback";
+import { FamilyBadge } from "@/components/SpendKind";
 import { userName } from "@/lib/constants";
 import {
   formatCents,
   formatSgtDate,
   formatSgtTime,
+  isFamilySpend,
   parseCents,
   type UserWeekModel,
   type WeekModel,
@@ -84,6 +86,12 @@ function WeekRow({
           {week.userWeeks.map((uw) => (
             <PersonLine key={uw.userId} userWeek={uw} />
           ))}
+          {week.familySpentCents > 0 ? (
+            <p className="text-xs tabular-nums text-brand">
+              + {formatCents(week.familySpentCents)} family big ticket — outside
+              both envelopes
+            </p>
+          ) : null}
         </div>
       </button>
 
@@ -97,7 +105,7 @@ function WeekRow({
             <ul className="flex flex-col gap-2.5">
               {week.spends.map((spend) => (
                 <li key={spend.id} className="flex items-baseline justify-between gap-3">
-                  <div className="min-w-0">
+                  <div className="flex min-w-0 items-baseline gap-2">
                     <p className="truncate text-sm">
                       <span className="font-semibold tabular-nums">
                         {formatCents(parseCents(spend.amount))}
@@ -106,6 +114,7 @@ function WeekRow({
                         <span className="ml-2 text-muted">{spend.note}</span>
                       ) : null}
                     </p>
+                    {isFamilySpend(spend) ? <FamilyBadge /> : null}
                   </div>
                   <span className="shrink-0 text-xs text-muted">
                     {userName(spend.logged_by)} ·{" "}

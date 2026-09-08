@@ -5,6 +5,11 @@ import { useMemo, useState } from "react";
 import { ErrorBanner, ScreenSkeleton, Spinner } from "@/components/Feedback";
 import Numpad from "@/components/Numpad";
 import Sheet from "@/components/Sheet";
+import {
+  FamilyBadge,
+  FamilyKindHint,
+  SpendKindToggle,
+} from "@/components/SpendKind";
 import UserToggle from "@/components/UserToggle";
 import { amountToCents, centsToBuffer, displayAmount, pushAmountKey } from "@/lib/amountInput";
 import { userName } from "@/lib/constants";
@@ -13,8 +18,10 @@ import {
   formatCents,
   formatCountdown,
   formatSgtDayTime,
+  isFamilySpend,
   parseCents,
   redeemBlockReason,
+  type SpendKind,
   type SpendRow,
   type UserWeekModel,
   type WeekModel,
@@ -196,19 +203,23 @@ function QuickLog({
   const { addSpend } = useHousehold();
   const [buffer, setBuffer] = useState("");
   const [note, setNote] = useState("");
+  // Spec § 16 — deliberately resets to `personal` after every log.
+  const [kind, setKind] = useState<SpendKind>("personal");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   const cents = amountToCents(buffer);
+  const family = kind === "family";
 
   async function submit() {
     if (cents <= 0 || busy) return;
     setBusy(true);
     setFailure(null);
     try {
-      await addSpend({ amountCents: cents, note, loggedBy: userId });
+      await addSpend({ amountCents: cents, note, loggedBy: userId, kind });
       setBuffer("");
       setNote("");
+      setKind("personal");
     } catch (err) {
       setFailure(err instanceof Error ? err.message : "Could not log that spend.");
     } finally {
@@ -218,10 +229,14 @@ function QuickLog({
 
   return (
     <section className="flex flex-col gap-3">
-      <div className="rounded-3xl border border-border bg-surface px-5 py-4 text-center">
+      <div
+        className={`rounded-3xl border px-5 py-4 text-center transition ${
+          family ? "border-brand/50 bg-brand/5" : "border-border bg-surface"
+        }`}
+      >
         <span
           className={`text-4xl font-bold tabular-nums ${
-            cents > 0 ? "text-foreground" : "text-muted/50"
+            cents <= 0 ? "text-muted/50" : family ? "text-brand" : "text-foreground"
           }`}
         >
           ${displayAmount(buffer)}
@@ -238,6 +253,9 @@ function QuickLog({
         maxLength={80}
         className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-base outline-none placeholder:text-muted/70 focus:border-brand"
       />
+
+      <SpendKindToggle value={kind} onChange={setKind} />
+      {family ? <FamilyKindHint /> : null}
 
       <UserToggle value={userId} onChange={setUserId} />
 
@@ -304,9 +322,12 @@ function ThisWeek({
                     </span>
                   ) : null}
                 </p>
-                <p className="mt-0.5 text-xs text-muted">
-                  {userName(spend.logged_by)} ·{" "}
-                  {formatSgtDayTime(Date.parse(spend.created_at))}
+                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
+                  <span>
+                    {userName(spend.logged_by)} ·{" "}
+                    {formatSgtDayTime(Date.parse(spend.created_at))}
+                  </span>
+                  {isFamilySpend(spend) ? <FamilyBadge /> : null}
                 </p>
               </div>
               <button
@@ -345,6 +366,7 @@ function EditSpendSheet({
   const { updateSpend } = useHousehold();
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [kind, setKind] = useState<SpendKind>("personal");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [loadedId, setLoadedId] = useState<string | null>(null);
@@ -354,6 +376,7 @@ function EditSpendSheet({
     setLoadedId(spend.id);
     setAmount(centsToBuffer(parseCents(spend.amount)));
     setNote(spend.note ?? "");
+    setKind(isFamilySpend(spend) ? "family" : "personal");
     setFailure(null);
   }
 
@@ -367,7 +390,7 @@ function EditSpendSheet({
     setBusy(true);
     setFailure(null);
     try {
-      await updateSpend(spend.id, { amountCents: cents, note });
+      await updateSpend(spend.id, { amountCents: cents, note, kind });
       onClose();
     } catch (err) {
       setFailure(err instanceof Error ? err.message : "Could not save.");
@@ -399,6 +422,11 @@ function EditSpendSheet({
             className="mt-1 w-full rounded-2xl border border-border bg-background px-4 py-3 text-base font-normal text-foreground outline-none focus:border-brand"
           />
         </label>
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Kind
+          <SpendKindToggle value={kind} onChange={setKind} className="mt-1" />
+        </div>
+        {kind === "family" ? <FamilyKindHint /> : null}
         {failure ? <ErrorBanner message={failure} /> : null}
         <button
           type="button"

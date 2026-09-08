@@ -55,12 +55,27 @@ export interface FixedOutflowRow {
   deactivated_at: string | null;
 }
 
+/**
+ * Spec § 16. `personal` comes out of `logged_by`'s weekly envelope. `family` is
+ * a household big-ticket item (furniture, flights, medical): it has no weekly
+ * target at all and touches neither envelope, carry chain, streak nor pot — it
+ * only counts against the monthly tracking target.
+ */
+export type SpendKind = "personal" | "family";
+
 export interface SpendRow {
   id: string;
   amount: Numeric;
   note: string | null;
   logged_by: string;
+  /** Defaults to `personal` — rows written before the kind existed have none. */
+  kind: SpendKind;
   created_at: string;
+}
+
+/** Spec § 16: anything that is not explicitly `family` is a personal spend. */
+export function isFamilySpend(spend: Pick<SpendRow, "kind">): boolean {
+  return spend.kind === "family";
 }
 
 export interface PotLedgerRow {
@@ -225,15 +240,35 @@ function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-/**
- * Number of Mondays in an SGT calendar month (4 or 5). Display only now that
- * the envelope is a plain per-person number. Aug 2026 → 5, Sep 2026 → 4.
- */
-export function weeksInMonth(monthKey: string): number {
+/** How many times `weekday` (0 = Sun … 6 = Sat) falls in an SGT month. */
+function weekdayCountInMonth(monthKey: string, weekday: number): number {
   const { year, month } = parseMonthKey(monthKey);
   const firstWeekday = sgtFields(sgtEpoch(year, month, 1)).weekday;
-  const firstMondayDay = 1 + ((1 - firstWeekday + 7) % 7);
-  return Math.floor((daysInMonth(year, month) - firstMondayDay) / 7) + 1;
+  const firstDay = 1 + ((weekday - firstWeekday + 7) % 7);
+  return Math.floor((daysInMonth(year, month) - firstDay) / 7) + 1;
+}
+
+/** Offset in days from a week's Monday to its Thursday (ISO-8601 § 2). */
+const THURSDAY_OFFSET_DAYS = 3;
+
+/**
+ * Spec § 2 (ISO-8601): the calendar month a week belongs to is the one
+ * containing its **Thursday**, not its Monday. Mon 2026-08-31 → Sun 2026-09-06
+ * is a SEPTEMBER week; Mon 2026-09-28 → Sun 2026-10-04 is an October week.
+ *
+ * @param mondayMs the week's Monday 00:00 SGT (as produced by {@link mondayStart})
+ */
+export function weekMonthKey(mondayMs: number): string {
+  return sgtMonthKey(mondayMs + THURSDAY_OFFSET_DAYS * DAY_MS);
+}
+
+/**
+ * Spec § 4: number of weeks belonging to an SGT calendar month under the
+ * Thursday rule — i.e. the number of Thursdays in it (4 or 5). Display only.
+ * Sep 2026 → 4 (Thursdays 3/10/17/24), Dec 2026 → 5.
+ */
+export function weeksInMonth(monthKey: string): number {
+  return weekdayCountInMonth(monthKey, 4);
 }
 
 /* ------------------------------------------------------------------ *
@@ -332,13 +367,13 @@ export interface UserWeekModel {
   carryInCents: number;
   /** budget + carryIn. */
   effectiveEnvelopeCents: number;
-  /** Sum of THIS person's spends in the week. */
+  /** Sum of THIS person's PERSONAL spends in the week (§ 16: family is out). */
   spentCents: number;
   /** effectiveEnvelope − spent. Negative = overspent. */
   resultCents: number;
   /** Banked into the shared pot when this closed week ended. */
   earnCents: number;
-  /** This person's spends in the week, newest first. */
+  /** This person's personal spends in the week, newest first. */
   spends: SpendRow[];
 }
 
@@ -350,7 +385,7 @@ export interface WeekModel {
   /** Sunday 23:59:59.999 SGT, epoch ms. */
   end: number;
   status: WeekStatus;
-  /** Calendar month containing the week's Monday, `YYYY-MM`. */
+  /** Calendar month containing the week's THURSDAY, `YYYY-MM` (§ 2). */
   monthKey: string;
   label: string;
   /** Rollover % that applied to this week (household setting). */
@@ -360,10 +395,17 @@ export interface WeekModel {
   userWeeksById: Record<string, UserWeekModel>;
   /** Household combined figures for the week. */
   envelopeCents: number;
+  /** Personal spends only — the sum of every `userWeeks[].spentCents`. */
+  personalSpentCents: number;
+  /** Family big-ticket spends in the week — outside every envelope (§ 16). */
+  familySpentCents: number;
+  /** personal + family. Not comparable to `envelopeCents`. */
   spentCents: number;
   earnCents: number;
-  /** Every spend bucketed into this week (any user), newest first. */
+  /** Every spend bucketed into this week (any user, any kind), newest first. */
   spends: SpendRow[];
+  /** Just the family spends in this week, newest first. */
+  familySpends: SpendRow[];
 }
 
 /** One person's whole timeline. */
@@ -400,16 +442,23 @@ export interface MonthModel {
   /** The outflows that actually count in this month (yearly only in theirs). */
   fixedOutflows: MonthFixedOutflow[];
   fixedTotalCents: number;
-  /** Every spend whose SGT calendar month is this month, all users. */
+  /** Every spend whose SGT calendar month is this month — personal + family. */
   spentCents: number;
+  /** The personal slice of `spentCents` (§ 16). */
+  personalSpentCents: number;
+  /** The family big-ticket slice of `spentCents` (§ 16). */
+  familySpentCents: number;
+  /** PERSONAL spends per user — family spends belong to nobody's envelope. */
   spentByUser: Record<string, number>;
+  /** This month's family big-ticket spends, newest first. */
+  familySpends: SpendRow[];
   /** spent + fixed — what the tracking target is measured against. */
   trackedTotalCents: number;
   /** monthlyBudget − trackedTotal. Negative = over the tracking target. */
   remainingCents: number;
-  /** Mondays in the month (display only). */
+  /** Thursdays in the month (display only, § 4). */
   weeksInMonth: number;
-  /** Weeks whose MONDAY falls in this month — the weekly engine's buckets. */
+  /** Weeks whose THURSDAY falls in this month — the weekly engine's buckets. */
   weeks: WeekModel[];
 }
 
@@ -490,20 +539,24 @@ export function userBudgetCentsAt(
 }
 
 /**
- * Spec § 7: a fixed outflow counts in month M iff it was created before M+1
- * starts, was not deactivated before M started, and — for `yearly` rows — M is
- * its `billing_month`. `billing_day` is display-only.
+ * Spec § 7: a fixed outflow counts in month M iff it was in its ACTIVE state as
+ * of the last instant of M — `created_at <= endOfMonth(M)` and not yet
+ * deactivated by then — and, for `yearly` rows, M is its `billing_month`.
+ * `billing_day` is display-only.
+ *
+ * The end-of-month snapshot mirrors § 13's settings rule. It is what stops a
+ * bill that was edited (deactivate + insert a replacement) from counting twice
+ * in the month it was replaced.
  */
 export function outflowsForMonth(
   rows: FixedOutflowRow[],
   monthKey: string,
 ): FixedOutflowRow[] {
-  const monthStart = startOfMonthKey(monthKey);
-  const nextMonthStart = startOfMonthKey(shiftMonthKey(monthKey, 1));
+  const monthEnd = startOfMonthKey(shiftMonthKey(monthKey, 1)) - 1;
   const { month } = parseMonthKey(monthKey);
   return rows.filter((row) => {
-    if (Date.parse(row.created_at) >= nextMonthStart) return false;
-    if (row.deactivated_at !== null && Date.parse(row.deactivated_at) < monthStart) {
+    if (Date.parse(row.created_at) > monthEnd) return false;
+    if (row.deactivated_at !== null && Date.parse(row.deactivated_at) <= monthEnd) {
       return false;
     }
     if (row.cadence === "yearly") return row.billing_month === month;
@@ -666,8 +719,8 @@ export function computeModel(
     if (weekBucket) weekBucket.push(spend);
     else spendsByWeek.set(weekKey, [spend]);
 
-    // Spec § 12: month TRACKING buckets by plain SGT calendar month, which
-    // deliberately diverges from the Monday rule at month boundaries.
+    // Spec § 3: month TRACKING buckets by plain SGT calendar month, which
+    // deliberately diverges from the week rule at month boundaries.
     const monthKey = sgtMonthKey(ms);
     const monthBucket = spendsByMonth.get(monthKey);
     if (monthBucket) monthBucket.push(spend);
@@ -685,20 +738,24 @@ export function computeModel(
   for (let start = genesis; start <= currentMonday; start += WEEK_MS) {
     const end = start + WEEK_MS - 1;
     const key = sgtDateKey(start);
-    const monthKey = sgtMonthKey(start);
+    // Spec § 2 (ISO-8601): the week's month is the one holding its Thursday.
+    const monthKey = weekMonthKey(start);
     const status: WeekStatus =
       end < nowMs ? "closed" : start <= nowMs ? "open" : "future";
     const label = formatWeekRange(start, end);
     const rolloverPct = settingsAt(settings, start)?.rollover_pct ?? 0;
 
     const allSpends = (spendsByWeek.get(key) ?? []).slice().sort(newestFirst);
+    // Spec § 16: family big-ticket spends bypass BOTH envelopes entirely.
+    const familySpends = allSpends.filter(isFamilySpend);
+    const personalSpends = allSpends.filter((s) => !isFamilySpend(s));
 
     const userWeeks: UserWeekModel[] = [];
     for (const userId of userIds) {
       const userGenesis = genesisByUser.get(userId);
       if (userGenesis === undefined || start < userGenesis) continue;
 
-      const mine = allSpends.filter((s) => s.logged_by === userId);
+      const mine = personalSpends.filter((s) => s.logged_by === userId);
       const spentCents = mine.reduce((sum, s) => sum + parseCents(s.amount), 0);
       const budgetCents = userBudgetCentsAt(rows.userBudgets, userId, start);
       const carryInCents = carryByUser.get(userId) ?? 0;
@@ -739,9 +796,18 @@ export function computeModel(
         (sum, u) => sum + u.effectiveEnvelopeCents,
         0,
       ),
+      personalSpentCents: personalSpends.reduce(
+        (sum, s) => sum + parseCents(s.amount),
+        0,
+      ),
+      familySpentCents: familySpends.reduce(
+        (sum, s) => sum + parseCents(s.amount),
+        0,
+      ),
       spentCents: allSpends.reduce((sum, s) => sum + parseCents(s.amount), 0),
       earnCents: 0,
       spends: allSpends,
+      familySpends,
     };
     weeks.push(week);
 
@@ -813,8 +879,17 @@ export function computeModel(
 
   /* --- 6. Month tracking (plain calendar months) -------------------- */
   const months: MonthModel[] = [];
-  const firstMonthKey = sgtMonthKey(genesis);
-  const lastMonthKey = sgtMonthKey(nowMs);
+  // Spec § 2/§ 13: months start at the GENESIS WEEK's month under the Thursday
+  // rule, so a genesis Monday of 2026-08-31 opens the ledger in September and
+  // no stray August ever appears.
+  const firstMonthKey = weekMonthKey(genesis);
+  // The current tracking month is the calendar month we are in, but the current
+  // week may already belong to the NEXT month (its Thursday has crossed over),
+  // so enumerate through whichever is later — and never before the first month.
+  const currentWeekMonthKey = weekMonthKey(currentMonday);
+  const lastMonthKey = [sgtMonthKey(nowMs), currentWeekMonthKey, firstMonthKey]
+    .sort()
+    .pop()!;
   for (
     let monthKey = firstMonthKey;
     monthKey <= lastMonthKey;
@@ -838,16 +913,24 @@ export function computeModel(
     );
 
     const monthSpends = spendsByMonth.get(monthKey) ?? [];
-    const spentCents = monthSpends.reduce(
-      (sum, s) => sum + parseCents(s.amount),
-      0,
-    );
+    // Spec § 16: family big-ticket spends skip every envelope but still count
+    // in full against the month's tracking target.
+    const monthFamilySpends = monthSpends.filter(isFamilySpend).sort(newestFirst);
+    let personalSpentCents = 0;
+    let familySpentCents = 0;
     const spentByUser: Record<string, number> = Object.fromEntries(
       userIds.map((id) => [id, 0]),
     );
     for (const s of monthSpends) {
-      spentByUser[s.logged_by] = (spentByUser[s.logged_by] ?? 0) + parseCents(s.amount);
+      const cents = parseCents(s.amount);
+      if (isFamilySpend(s)) {
+        familySpentCents += cents;
+      } else {
+        personalSpentCents += cents;
+        spentByUser[s.logged_by] = (spentByUser[s.logged_by] ?? 0) + cents;
+      }
     }
+    const spentCents = personalSpentCents + familySpentCents;
 
     const trackedTotalCents = spentCents + fixedCents;
 
@@ -868,7 +951,10 @@ export function computeModel(
         .sort((a, b) => a.billingDay - b.billingDay || a.name.localeCompare(b.name)),
       fixedTotalCents: fixedCents,
       spentCents,
+      personalSpentCents,
+      familySpentCents,
       spentByUser,
+      familySpends: monthFamilySpends,
       trackedTotalCents,
       remainingCents: monthlyBudgetCents - trackedTotalCents,
       weeksInMonth: weeksInMonth(monthKey),
@@ -894,7 +980,7 @@ export function computeModel(
     currentWeek: weeks.find((w) => w.status === "open") ?? null,
     months,
     monthsByKey,
-    currentMonthKey: lastMonthKey,
+    currentMonthKey: monthsByKey[sgtMonthKey(nowMs)] ? sgtMonthKey(nowMs) : lastMonthKey,
     earnedTotalCents,
     ledgerTotalCents,
     potBalanceCents,

@@ -7,7 +7,9 @@ import { userName } from "@/lib/constants";
 import {
   formatCents,
   formatMonthLabel,
+  formatSgtDate,
   outflowCadenceLabel,
+  parseCents,
   spentFraction,
   type MonthModel,
   type WeekModel,
@@ -87,8 +89,13 @@ function MonthBody({ month }: { month: MonthModel }) {
           tone="amber"
         />
         <Row
-          label="Spent this month"
-          value={`−${formatCents(month.spentCents)}`}
+          label="Personal spends"
+          value={`−${formatCents(month.personalSpentCents)}`}
+          tone="amber"
+        />
+        <Row
+          label="Family big ticket"
+          value={`−${formatCents(month.familySpentCents)}`}
           tone="amber"
         />
         <div className="my-3 border-t border-border" />
@@ -105,9 +112,13 @@ function MonthBody({ month }: { month: MonthModel }) {
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-[0.14em] text-muted">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-[0.14em] text-muted">
           Spent by
         </h2>
+        <p className="mb-2 text-xs text-muted">
+          Personal spends only — family big-ticket items belong to nobody&apos;s
+          envelope.
+        </p>
         <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface">
           {model.userIds.map((id) => (
             <li key={id} className="flex items-center justify-between px-4 py-3">
@@ -119,6 +130,37 @@ function MonthBody({ month }: { month: MonthModel }) {
           ))}
         </ul>
       </section>
+
+      {month.familySpends.length > 0 ? (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-[0.14em] text-muted">
+            Family big ticket this month
+          </h2>
+          <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface">
+            {month.familySpends.map((spend) => (
+              <li
+                key={spend.id}
+                className="flex items-baseline justify-between gap-3 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-base font-semibold tabular-nums">
+                    {formatCents(parseCents(spend.amount))}
+                    {spend.note ? (
+                      <span className="ml-2 text-sm font-normal text-muted">
+                        {spend.note}
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs text-muted">
+                  {userName(spend.logged_by)} ·{" "}
+                  {formatSgtDate(Date.parse(spend.created_at))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-[0.14em] text-muted">
@@ -154,11 +196,11 @@ function MonthBody({ month }: { month: MonthModel }) {
         </h2>
         <p className="mb-3 text-xs text-muted">
           One bar per person, against their own envelope. Weeks belong to the
-          month containing their Monday.
+          month containing their Thursday.
         </p>
         {month.weeks.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-border px-4 py-5 text-center text-sm text-muted">
-            No week starts in this month yet.
+            No week belongs to this month yet.
           </p>
         ) : (
           <ul className="flex flex-col gap-4">
@@ -189,7 +231,12 @@ function WeekBars({ week }: { week: WeekModel }) {
           ) : null}
         </span>
         <span className="tabular-nums text-muted">
-          {formatCents(week.spentCents)} household
+          {formatCents(week.personalSpentCents)} personal
+          {week.familySpentCents > 0 ? (
+            <span className="ml-1.5 text-brand">
+              + {formatCents(week.familySpentCents)} family
+            </span>
+          ) : null}
         </span>
       </div>
 

@@ -23,6 +23,7 @@ import {
   type OutflowCadence,
   type PotLedgerRow,
   type SettingsRow,
+  type SpendKind,
   type SpendRow,
   type UserBudgetRow,
 } from "./engine";
@@ -62,10 +63,17 @@ export type HouseholdValue = {
     amountCents: number;
     note?: string | null;
     loggedBy: string;
+    /** Spec § 16. Defaults to `personal`. */
+    kind?: SpendKind;
   }) => Promise<void>;
   updateSpend: (
     id: string,
-    patch: { amountCents?: number; note?: string | null; createdAt?: string },
+    patch: {
+      amountCents?: number;
+      note?: string | null;
+      createdAt?: string;
+      kind?: SpendKind;
+    },
   ) => Promise<void>;
   deleteSpend: (id: string) => Promise<void>;
 
@@ -284,12 +292,13 @@ export function useHouseholdState(): HouseholdValue {
   );
 
   const addSpend = useCallback<HouseholdValue["addSpend"]>(
-    ({ amountCents, note, loggedBy }) =>
+    ({ amountCents, note, loggedBy, kind }) =>
       run(() =>
         supabase.from("spends").insert({
           amount: centsToNumericString(amountCents),
           note: note?.trim() ? note.trim() : null,
           logged_by: loggedBy,
+          kind: kind ?? "personal",
         }),
       ),
     [run],
@@ -305,6 +314,7 @@ export function useHouseholdState(): HouseholdValue {
         update.note = patch.note?.trim() ? patch.note.trim() : null;
       }
       if (patch.createdAt !== undefined) update.created_at = patch.createdAt;
+      if (patch.kind !== undefined) update.kind = patch.kind;
       return run(() => supabase.from("spends").update(update).eq("id", id));
     },
     [run],
