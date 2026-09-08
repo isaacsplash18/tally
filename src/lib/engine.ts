@@ -820,9 +820,15 @@ export function computeModel(
     monthKey <= lastMonthKey;
     monthKey = shiftMonthKey(monthKey, 1)
   ) {
-    const monthStart = startOfMonthKey(monthKey);
+    // Spec § 13: resolve the tracking target as of the END of the month, not
+    // its start — a settings change made mid-month should update THAT
+    // month's target immediately (the user just changed the number and
+    // expects to see it reflected today), while a past month's end has
+    // already happened, so a later change (always effective "now") can never
+    // land on or before it and past months stay stable.
+    const monthEnd = startOfMonthKey(shiftMonthKey(monthKey, 1)) - 1;
     const monthSettings =
-      settingsAt(settings, monthStart) ?? settingsAt(settings, genesis);
+      settingsAt(settings, monthEnd) ?? settingsAt(settings, genesis);
     const monthlyBudgetCents = parseCents(monthSettings?.monthly_budget ?? 0);
 
     const fixedRows = outflowsForMonth(rows.fixedOutflows, monthKey);

@@ -646,6 +646,73 @@ describe("monthly tracking", () => {
     assert.deepEqual(m.months.map((x) => x.key), ["2026-08", "2026-09"]);
     assert.equal(m.currentMonthKey, "2026-09");
   });
+
+  it("a settings row inserted mid-month changes THAT month's target immediately", () => {
+    // NOW is Tue 2026-09-15 — this lands mid-September, the current month.
+    const midMonthChange: SettingsRow = {
+      id: "settings-midmonth",
+      monthly_budget: "5000.00",
+      rollover_pct: 50,
+      currency: "SGD",
+      effective_from: iso(2026, 9, 10),
+      created_at: iso(2026, 9, 10),
+    };
+    const m = model({
+      settings: [SEED_SETTINGS, midMonthChange],
+      spends: [spend("100.00", iso(2026, 9, 5, 12, 0), ISAAC)],
+    });
+    const sep = m.monthsByKey["2026-09"];
+    assert.equal(sep.monthlyBudgetCents, 500000, "Sep target picks up the mid-month row");
+    assert.equal(sep.remainingCents, 500000 - sep.trackedTotalCents);
+  });
+
+  it("a past month's target is unaffected by a later settings change", () => {
+    const midMonthChange: SettingsRow = {
+      id: "settings-midmonth",
+      monthly_budget: "5000.00",
+      rollover_pct: 50,
+      currency: "SGD",
+      effective_from: iso(2026, 9, 10),
+      created_at: iso(2026, 9, 10),
+    };
+    const m = model({ settings: [SEED_SETTINGS, midMonthChange] });
+    const aug = m.monthsByKey["2026-08"];
+    assert.equal(
+      aug.monthlyBudgetCents,
+      400000,
+      "August already ended before the Sep-10 row's effective_from — it keeps the seed target",
+    );
+  });
+
+  it("resolves a week's rollover_pct by its own Monday, not a mid-week settings change", () => {
+    // effective Wed 2026-09-02 — inside the Mon 2026-08-31 week (§ 2), but
+    // after that week's own Monday, and it changes September's tracking
+    // target (§ 3: a spend's month, not its week's month, governs tracking).
+    const midWeekChange: SettingsRow = {
+      id: "settings-midweek",
+      monthly_budget: "4500.00",
+      rollover_pct: 80,
+      currency: "SGD",
+      effective_from: iso(2026, 9, 2),
+      created_at: iso(2026, 9, 2),
+    };
+    const m = model({
+      settings: [SEED_SETTINGS, midWeekChange],
+      spends: [spend("150.00", iso(2026, 8, 31, 12, 0), ISAAC)],
+    });
+
+    const week = m.weeksByKey["2026-08-31"];
+    assert.equal(week.rolloverPct, 50, "week's Monday precedes the change — old rollover_pct");
+    assert.equal(
+      week.userWeeksById[ISAAC].earnCents,
+      10000, // (35000 - 15000) * 50%, not 80%
+      "earn is banked at the old rollover_pct despite the mid-week change",
+    );
+
+    // Meanwhile September's tracking target (a different concern, § 13) DOES
+    // pick up the same row, since it lands before September's end.
+    assert.equal(m.monthsByKey["2026-09"].monthlyBudgetCents, 450000);
+  });
 });
 
 /* ------------------------------------------------------------------ *

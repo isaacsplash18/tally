@@ -220,7 +220,9 @@ function TrackingCard({ monthKey }: { monthKey: string }) {
       </label>
       <p className="mt-1.5 text-xs leading-snug text-muted">
         Tracking only. It does not feed the weekly envelopes — the Month screen
-        measures spends + fixed outflows against it.
+        measures spends + fixed outflows against it. Saving updates THIS
+        month&apos;s tracking target immediately; past months keep the target
+        they were actually measured against.
       </p>
 
       <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-muted">

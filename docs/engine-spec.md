@@ -166,11 +166,23 @@ below zero, or if the amount is not positive.
 **13. Monthly tracking.** For each calendar month M from the genesis month through the
 current SGT month:
 ```
-monthlyBudget(M) = settings row with greatest effective_from <= startOfMonth(M)
+monthlyBudget(M) = settings row with greatest effective_from <= endOfMonth(M)
+                    (endOfMonth(M) = startOfMonth(M+1) − 1ms), falling back to
+                    the settings row at genesis if none qualifies
 spent(M)         = sum of ALL users' spends whose SGT calendar month is M   (§ 3)
 tracked(M)       = spent(M) + fixedTotal(M)                                 (§ 7)
 remaining(M)     = monthlyBudget(M) − tracked(M)                            // may go negative
 ```
+`monthlyBudget(M)` resolves at the END of the month, not its start. A tracking target is a
+scoreboard the user is looking at *right now*; when they change it mid-month they expect the
+current month's number to move immediately, not next month's. Because `settings` rows are
+always inserted with `effective_from = now()`, a row can only ever affect the current month —
+resolving against `endOfMonth(M)` for a past month M is equivalent to resolving at
+`startOfMonth(M)` (nothing new can be inserted with `effective_from` in the past), so past
+months stay exactly as stable as before. `rollover_pct` is unaffected by this — it stays
+resolved per week at that week's own Monday (§ 5), because it governs the pot/freeze money
+math and must not move once a week has started.
+
 This is a scoreboard only — nothing here feeds §§ 6–12.
 
 **14. Current streak.** As left by step 11, per person. The Home screen shows the ACTIVE
