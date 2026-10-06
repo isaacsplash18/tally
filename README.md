@@ -1,6 +1,6 @@
 # Tally
 
-A dead-simple household budget tracker for two (Isaac & Rachell, Singapore, SGD).
+A dead-simple household budget tracker for two (Isaac & Partner, Singapore, SGD).
 One shared monthly budget, one envelope per week, a reward pot for weeks that
 close under budget. Next.js App Router + Tailwind + Supabase, installable as a PWA.
 
@@ -21,9 +21,9 @@ npm run dev      # http://localhost:3000
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/publishable key |
 
 There is no PIN or login. On first visit the app asks "Who's this?" — one tap
-on Isaac or Rachell picks an identity, stored as a flag in `localStorage`, and
+on Isaac or Partner picks an identity, stored as a flag in `localStorage`, and
 you're straight into the app. Returning visits skip the chooser entirely; the
-Isaac/Rachell toggle on Home switches identity anytime, and Settings has a
+Isaac/Partner toggle on Home switches identity anytime, and Settings has a
 "Switch to …" button that does the same. RLS is deliberately permissive for
 anon (see `docs/engine-spec.md`), which is an accepted tradeoff for a
 two-person app with no security boundary to speak of.

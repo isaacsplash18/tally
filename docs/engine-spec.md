@@ -6,7 +6,7 @@ the app computes everything on read from `settings` + `user_budgets` + `fixed_ou
 `spends` + `pot_ledger`. The TypeScript engine (`src/lib/engine.ts`) must mirror this spec
 exactly.
 
-Supabase project: `toeimgwqcewifahwunyd` (ap-southeast-1).
+Supabase project: `<project-ref>` (ap-southeast-1).
 
 ## The shape of the product
 
@@ -42,7 +42,7 @@ outflows for a calendar month and feeds nothing else.
 
 - `users` (id uuid pk, name, created_at) — seeded:
   - Isaac: `11111111-1111-4111-8111-111111111111`
-  - Rachell: `22222222-2222-4222-8222-222222222222`
+  - Partner: `22222222-2222-4222-8222-222222222222`
   (deterministic UUIDs — safe to hardcode in the frontend)
 - `settings` (id, monthly_budget numeric(10,2), rollover_pct int 0..100, currency,
   effective_from timestamptz unique, created_at) — seeded: 4000.00 / 50 / SGD /

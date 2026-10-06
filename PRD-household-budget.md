@@ -2,14 +2,14 @@
 
 ## 1. What this is
 
-A dead-simple household expenditure tracker for 2 users, Isaac and Rachell, in Singapore (SGD). One shared household budget. The only daily action is logging a spend in under 5 seconds. Everything else (subscriptions, budget maths, reward/punish logic) is automatic.
+A dead-simple household expenditure tracker for 2 users, Isaac and Partner, in Singapore (SGD). One shared household budget. The only daily action is logging a spend in under 5 seconds. Everything else (subscriptions, budget maths, reward/punish logic) is automatic.
 
 This is explicitly NOT a full personal finance manager. Reference points: take the envelope-budget idea from Actual Budget (github.com/actualbudget/actual) but strip it to 1 envelope per week; take nothing else. No bank sync, no double-entry, no net worth.
 
 ## 2. Users
 
-1. 2 fixed users: Isaac and Rachell. No sign-up flow. Seed both accounts.
-2. Auth: Supabase email magic link, or a simpler shared household PIN with a user toggle (Isaac / Rachell) on the log screen. Builder may choose whichever is simpler, but each logged spend must record who logged it.
+1. 2 fixed users: Isaac and Partner. No sign-up flow. Seed both accounts.
+2. Auth: Supabase email magic link, or a simpler shared household PIN with a user toggle (Isaac / Partner) on the log screen. Builder may choose whichever is simpler, but each logged spend must record who logged it.
 3. Both users see the same household data. There is no private data.
 
 ## 3. Core concepts
@@ -36,7 +36,7 @@ This is explicitly NOT a full personal finance manager. Reference points: take t
 
 ## 6. Data model (Supabase Postgres)
 
-1. `users` (id, name) - seeded with Isaac and Rachell.
+1. `users` (id, name) - seeded with Isaac and Partner.
 2. `settings` (monthly_budget, rollover_pct, currency) - single row.
 3. `fixed_outflows` (id, name, amount, billing_day, active).
 4. `spends` (id, amount, note, logged_by, created_at).
